@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UNO - Human vs AI</title>
+<style>
+:root{--red:#cc262d;--blue:#1e64c8;--green:#28a050;--yellow:#f0c81e}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:radial-gradient(#165c3a,#0a1f16);font-family:Arial,Helvetica,sans-serif;color:#fff;display:flex;flex-direction:column;align-items:center;gap:12px;padding:12px}
+h1{margin:0;font-size:20px;letter-spacing:2px}
+#status{width:min(760px,100%);text-align:center;padding:12px;background:#0a1812;border:3px solid var(--red);border-radius:12px;font-weight:700;font-size:17px}
+.label{font-size:15px;font-weight:700}
+.hand{display:flex;justify-content:center;flex-wrap:wrap;gap:6px;max-width:900px;min-height:80px}
+.center{display:flex;align-items:center;justify-content:center;gap:28px;flex-wrap:wrap;margin:6px 0}
+.slot{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:14px;font-weight:700}
+.card{width:72px;height:108px;border-radius:10px;border:4px solid #fff;position:relative;flex:none;box-shadow:2px 3px 6px #0008;user-select:none;transition:transform .12s}
+.red{background:var(--red)}.blue{background:var(--blue)}.green{background:var(--green)}.yellow{background:var(--yellow)}
+.wild{background:conic-gradient(var(--red) 0 25%,var(--blue) 0 50%,var(--green) 0 75%,var(--yellow) 0)}
+.o{position:absolute;inset:22% 8%;background:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:24px}
+.red .o{color:var(--red)}.blue .o{color:var(--blue)}.green .o{color:var(--green)}.yellow .o{color:#d2a000}.wild .o{color:#222}
+.k{position:absolute;font-size:11px;font-weight:700;color:#fff}
+.yellow .k{color:#000}
+.k.a{top:3px;left:5px}.k.b{bottom:3px;right:5px;transform:rotate(180deg)}
+.back{background:#1c1c28}
+.back .o{background:#c81e28;color:#ffe05a;border:2px solid #ffe05a;font-size:15px}
+.small .card{width:46px;height:70px;border-width:3px;border-radius:7px}
+.small .o{font-size:10px}
+.glow{box-shadow:0 0 0 3px #ffe05a,0 0 14px #ffe05a;cursor:pointer}
+.glow:hover{transform:translateY(-14px)}
+#drawpile.glow:hover{transform:none}
+#dot{width:64px;height:64px;border-radius:50%;border:4px solid #fff;box-shadow:2px 3px 6px #0008}
+button{font:inherit;font-weight:700;color:#fff;background:#28805a;border:3px solid #fff;border-radius:10px;padding:10px 22px;cursor:pointer;font-size:16px}
+button:hover{filter:brightness(1.2)}
+#pass{background:#783c3c}
+.ov{position:fixed;inset:0;background:#000b;display:flex;align-items:center;justify-content:center;z-index:5}
+.panel{background:#10281e;border:4px solid #fff;border-radius:18px;padding:26px;text-align:center;display:flex;flex-direction:column;gap:14px;align-items:center}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<h1>UNO &mdash; HUMAN vs AI</h1>
+<div class="label" id="ailabel"></div>
+<div class="hand small" id="ai"></div>
+<div id="status"></div>
+<div class="center">
+  <div class="slot"><div id="drawpile"></div><span id="drawcount"></span></div>
+  <div class="slot"><div id="discard"></div><span>Discard</span></div>
+  <div class="slot"><span>Active colour</span><div id="dot"></div><span id="dotname"></span></div>
+</div>
+<button id="pass" class="hidden">Pass</button>
+<div class="label" id="humanlabel"></div>
+<div class="hand" id="human"></div>
+<div class="ov hidden" id="colorov"><div class="panel"><h2 style="margin:0">Choose a colour</h2><div class="grid" id="colorbtns"></div></div></div>
+<div class="ov hidden" id="overov"><div class="panel"><h1 id="overtitle" style="font-size:54px"></h1><div id="oversub"></div><button id="again">Play Again</button></div></div>
+
+<script>
+"use strict";
+const COLORS = ["red", "blue", "green", "yellow"];
+const CENTER = {Skip: "SKIP", Rev: "REV", "+2": "+2", Wild: "WILD", "+4": "+4"};
+const CORNER = {Skip: "SK", Rev: "RV", "+2": "+2", Wild: "W", "+4": "+4"};
+const PRIO = {d2: 3, skip: 2, rev: 1};
+let S = {}, timer = null;
+
+const $ = id => document.getElementById(id);
+const top = () => S.disc[S.disc.length - 1];
+const ok = c => c.t === "wild" || c.t === "w4" || c.c === S.active || (top().c !== "wild" && c.v === top().v);
+const name = c => c.t === "wild" ? "Wild" : c.t === "w4" ? "Wild +4" : c.c[0].toUpperCase() + c.c.slice(1) + " " + (c.v === "Rev" ? "Reverse" : c.v);
+
+function buildDeck() {
+  const d = [];
+  for (const c of COLORS) {
+    d.push({c, v: "0", t: "num"});
+    for (let n = 1; n <= 9; n++) d.push({c, v: "" + n, t: "num"}, {c, v: "" + n, t: "num"});
+    for (const [t, v] of [["skip", "Skip"], ["rev", "Rev"], ["d2", "+2"]]) d.push({c, v, t}, {c, v, t});
+  }
+  for (let i = 0; i < 4; i++) d.push({c: "wild", v: "Wild", t: "wild"}, {c: "wild", v: "+4", t: "w4"});
+  return d;
+}
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+function sortHand(h) {
+  const k = c => (COLORS.indexOf(c.c) < 0 ? 4 : COLORS.indexOf(c.c));
+  h.sort((a, b) => k(a) - k(b) || a.v.localeCompare(b.v));
+}
+function drawCard() {
+  if (!S.draw.length) {
+    if (S.disc.length <= 1) return null;
+    const t = S.disc.pop(); S.draw = shuffle(S.disc); S.disc = [t];
+  }
+  return S.draw.pop();
+}
+function give(hand, n) {
+  let k = 0;
+  for (let i = 0; i < n; i++) { const c = drawCard(); if (!c) break; hand.push(c); k++; }
+  sortHand(hand); return k;
+}
+
+function newGame() {
+  clearTimeout(timer);
+  S = {draw: shuffle(buildDeck()), disc: [], human: [], ai: [], phase: "human", active: "red", drawn: null, pending: null, status: ""};
+  for (let i = 0; i < 7; i++) { S.human.push(S.draw.pop()); S.ai.push(S.draw.pop()); }
+  sortHand(S.human); sortHand(S.ai);
+  let c;
+  while ((c = S.draw.pop()).t !== "num") S.draw.unshift(c);
+  S.disc.push(c); S.active = c.c;
+  S.status = "Your turn! Play a matching card or draw.";
+  render();
+}
+
+function setTurn(human) {
+  S.phase = human ? "human" : "ai";
+  if (!human) timer = setTimeout(aiTurn, 1100);
+  render();
+}
+
+function play(card, byHuman) {
+  const hand = byHuman ? S.human : S.ai;
+  hand.splice(hand.indexOf(card), 1);
+  S.disc.push(card); S.drawn = null;
+  if (!hand.length) {
+    S.phase = "over";
+    S.status = byHuman ? "You played your last card!" : "The AI played its last card!";
+    return render();
+  }
+  if (card.t === "wild" || card.t === "w4") {
+    if (byHuman) { S.pending = card; S.phase = "color"; S.status = "Choose a colour for your Wild card."; return render(); }
+    return resolve(card, false, bestColor());
+  }
+  resolve(card, byHuman, card.c);
+}
+
+function resolve(card, byHuman, color) {
+  S.active = color;
+  const who = byHuman ? "You" : "AI", opp = byHuman ? "AI" : "You";
+  const oppHand = byHuman ? S.ai : S.human, s = opp === "AI" ? "s" : "";
+  let keep = false, msg;
+  if (card.t === "skip" || card.t === "rev") {
+    keep = true;
+    msg = `${who} played ${name(card)}!${card.t === "rev" ? " (Reverse acts as Skip)" : ""} ${opp} miss${opp === "AI" ? "es" : ""} a turn.`;
+  } else if (card.t === "d2") {
+    keep = true; give(oppHand, 2); msg = `${who} played ${name(card)}! ${opp} draw${s} 2 cards.`;
+  } else if (card.t === "w4") {
+    keep = true; give(oppHand, 4); msg = `${who} played Wild +4 - colour is ${color}! ${opp} draw${s} 4 cards.`;
+  } else if (card.t === "wild") msg = `${who} played Wild - colour is ${color}.`;
+  else msg = `${who} played ${name(card)}.`;
+  if ((byHuman ? S.human : S.ai).length === 1) msg += " UNO!";
+  msg += keep ? (byHuman ? " Your turn again!" : " AI plays again.") : (byHuman ? " AI is thinking..." : " Your turn!");
+  S.status = msg;
+  setTurn(byHuman === keep);
+}
+
+function bestColor() {
+  const n = {red: 0, blue: 0, green: 0, yellow: 0};
+  S.ai.forEach(c => { if (c.c in n) n[c.c]++; });
+  const m = Math.max(...Object.values(n));
+  const pool = m ? COLORS.filter(c => n[c] === m) : COLORS;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function aiChoose() {
+  const p = S.ai.filter(ok);
+  if (!p.length) return null;
+  const nums = p.filter(c => c.t === "num"), acts = p.filter(c => c.t in PRIO), wilds = p.filter(c => c.c === "wild");
+  const dom = bestColor(), close = S.human.length <= 3;
+  const best = (arr, f) => arr.reduce((a, b) => (f(b) > f(a) ? b : a));
+  if (acts.length && (close || !nums.length)) return best(acts, c => PRIO[c.t] * 2 + (c.c === dom ? 1 : 0));
+  if (S.human.length <= 2) { const w4 = wilds.find(c => c.t === "w4"); if (w4) return w4; }
+  if (nums.length) return best(nums, c => (c.c === dom ? 100 : 0) + Number(c.v));
+  return wilds.find(c => c.t === "wild") || wilds[0];
+}
+
+function aiTurn() {
+  if (S.phase !== "ai") return;
+  const card = aiChoose();
+  if (card) return play(card, false);
+  const d = drawCard();
+  if (!d) { S.status = "AI cannot draw. Your turn!"; return setTurn(true); }
+  S.ai.push(d); sortHand(S.ai);
+  if (ok(d)) {
+    play(d, false);
+    if (S.phase !== "over") S.status = S.status.replace("AI played", "AI drew and played");
+    render();
+  } else { S.status = "AI drew a card. Your turn!"; setTurn(true); }
+}
+
+function clickDraw() {
+  if (S.phase !== "human") return;
+  if (S.drawn) { S.status = "Play the card you drew, or press Pass."; return render(); }
+  if (S.human.some(ok)) { S.status = "You already have a playable card!"; return render(); }
+  const c = drawCard();
+  if (!c) { S.status = "The draw pile is empty - your turn is skipped."; return setTurn(false); }
+  S.human.push(c); sortHand(S.human);
+  if (ok(c)) { S.drawn = c; S.status = `You drew ${name(c)} - play it or press Pass.`; render(); }
+  else { S.status = `You drew ${name(c)} - no play. AI's turn.`; setTurn(false); }
+}
+
+function clickCard(card) {
+  if (S.phase !== "human") return;
+  if (S.drawn && card !== S.drawn) { S.status = "You must play the card you just drew, or press Pass."; return render(); }
+  if (!ok(card)) { S.status = "That card can't be played on the current card."; return render(); }
+  play(card, true);
+}
+
+function el(card, opts = {}) {
+  const d = document.createElement("div");
+  if (opts.back) { d.className = "card back"; d.innerHTML = '<div class="o">UNO</div>'; return d; }
+  d.className = "card " + card.c + (opts.glow ? " glow" : "");
+  d.innerHTML = `<span class="k a">${CORNER[card.v] || card.v}</span><div class="o">${CENTER[card.v] || card.v}</div><span class="k b">${CORNER[card.v] || card.v}</span>`;
+  if (opts.click) d.onclick = opts.click;
+  return d;
+}
+
+function render() {
+  const hum = S.phase === "human";
+  $("status").textContent = S.status;
+  $("status").style.borderColor = getComputedStyle(document.documentElement).getPropertyValue("--" + S.active);
+  $("ailabel").textContent = `AI - ${S.ai.length} card${S.ai.length === 1 ? "" : "s"}${S.ai.length === 1 ? " (UNO!)" : ""}`;
+  $("humanlabel").textContent = `Your hand - ${S.human.length} card${S.human.length === 1 ? "" : "s"}${S.human.length === 1 ? " (UNO!)" : ""}`;
+  $("ai").replaceChildren(...S.ai.map(() => el(null, {back: true})));
+  const needDraw = hum && !S.drawn && !S.human.some(ok);
+  const dp = el(null, {back: true}); if (needDraw) dp.classList.add("glow");
+  dp.onclick = clickDraw; $("drawpile").replaceChildren(dp);
+  $("drawcount").textContent = `Draw (${S.draw.length})`;
+  $("discard").replaceChildren(el(top()));
+  $("dot").style.background = `var(--${S.active})`;
+  $("dotname").textContent = S.active[0].toUpperCase() + S.active.slice(1);
+  $("pass").classList.toggle("hidden", !(hum && S.drawn));
+  $("human").replaceChildren(...S.human.map(c => {
+    const playable = S.drawn ? c === S.drawn : ok(c);
+    return el(c, {glow: hum && playable, click: () => clickCard(c)});
+  }));
+  $("colorov").classList.toggle("hidden", S.phase !== "color");
+  $("overov").classList.toggle("hidden", S.phase !== "over");
+  if (S.phase === "over") {
+    const won = S.human.length === 0;
+    $("overtitle").textContent = won ? "YOU WIN!" : "AI WINS!";
+    $("overtitle").style.color = won ? "#ffe05a" : "#e65a5a";
+    $("oversub").textContent = won ? "You emptied your hand. Congratulations!" : "The AI emptied its hand. Better luck next time!";
+  }
+}
+
+$("pass").onclick = () => { if (S.phase === "human" && S.drawn) { S.drawn = null; S.status = "You passed. AI's turn."; setTurn(false); } };
+$("again").onclick = newGame;
+document.addEventListener("keydown", e => { if (e.key.toLowerCase() === "r" && S.phase === "over") newGame(); });
+for (const c of COLORS) {
+  const b = document.createElement("button");
+  b.textContent = c[0].toUpperCase() + c.slice(1);
+  b.style.background = `var(--${c})`; b.style.color = c === "yellow" ? "#000" : "#fff"; b.style.width = "150px";
+  b.onclick = () => { const card = S.pending; S.pending = null; resolve(card, true, c); };
+  $("colorbtns").appendChild(b);
+}
+newGame();
+</script>
+</body>
+</html>
